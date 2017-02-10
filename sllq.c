@@ -79,7 +79,7 @@ int sllq_set_size(sllq_t* queue, size_t size) {
             break;
         if (size & bit)
             return SLLQ_EINVAL;
-        bit << 1;
+        bit <<= 1;
     }
 
     queue->size = bit;
@@ -179,12 +179,52 @@ int sllq_destroy(sllq_t* queue) {
     return SLLQ_OK;
 }
 
+int sllq_flush(sllq_t* queue, sllq_item_callback_t callback) {
+    int err;
+
+    sllq_assert(queue);
+    if (!queue) {
+        return SLLQ_EINVAL;
+    }
+    sllq_assert(callback);
+    if (!callback) {
+        return SLLQ_EINVAL;
+    }
+
+    if (queue->item) {
+        size_t n;
+
+        for (n = 0; n < queue->size; n++) {
+            if ((err = pthread_mutex_lock(&(queue->item[n].mutex)))) {
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+
+            if (queue->item[n].have_data) {
+                callback(queue->item[n].data);
+                queue->item[n].data = 0;
+                queue->item[n].have_data = 0;
+            }
+
+            if ((err = pthread_mutex_unlock(&(queue->item[n].mutex)))) {
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+        }
+        free(queue->item);
+        queue->item = 0;
+    }
+
+    return SLLQ_OK;
+}
+
 /*
  * Queue write
  */
 
 int sllq_push(sllq_t* queue, void* data) {
     int err, locked = 0;
+    size_t wrote;
 
     sllq_assert(queue);
     if (!queue) {
@@ -200,14 +240,14 @@ int sllq_push(sllq_t* queue, void* data) {
     }
 
     while (1) {
-        while (!(queue->item[queue->write].have_data)) {
+        while (queue->item[queue->write].have_data) {
             if ((err = pthread_mutex_lock(&(queue->item[queue->write].mutex)))) {
                 errno = err;
                 return SLLQ_ERRNO;
             }
             locked = 1;
 
-            if (queue->item[queue->write].have_data)
+            if (!queue->item[queue->write].have_data)
                 break;
 
             queue->writers++;
@@ -219,7 +259,7 @@ int sllq_push(sllq_t* queue, void* data) {
             }
             queue->writers--;
 
-            if (queue->item[queue->write].have_data)
+            if (!queue->item[queue->write].have_data)
                 break;
 
             if ((err = pthread_mutex_unlock(&(queue->item[queue->write].mutex)))) {
@@ -239,8 +279,17 @@ int sllq_push(sllq_t* queue, void* data) {
             return SLLQ_ERRNO;
         }
 
+        if (queue->item[queue->write].have_data) {
+            if ((err = pthread_mutex_unlock(&(queue->item[queue->write].mutex)))) {
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+            continue;
+        }
+
         queue->item[queue->write].data = data;
         queue->item[queue->write].have_data = 1;
+        wrote = queue->write;
         queue->write++;
         queue->write &= queue->mask;
 
@@ -249,7 +298,7 @@ int sllq_push(sllq_t* queue, void* data) {
             pthread_cond_signal(&(queue->read_cond));
         }
 
-        if ((err = pthread_mutex_unlock(&(queue->item[queue->write].mutex)))) {
+        if ((err = pthread_mutex_unlock(&(queue->item[wrote].mutex)))) {
             errno = err;
             return SLLQ_ERRNO;
         }
@@ -259,8 +308,60 @@ int sllq_push(sllq_t* queue, void* data) {
     return SLLQ_OK;
 }
 
+int sllq_push_nb(sllq_t* queue, void* data) {
+    int err, ret;
+    size_t wrote;
+
+    sllq_assert(queue);
+    if (!queue) {
+        return SLLQ_EINVAL;
+    }
+    sllq_assert(data);
+    if (!data) {
+        return SLLQ_EINVAL;
+    }
+    sllq_assert(queue->item);
+    if (!queue->item) {
+        return SLLQ_EINVAL;
+    }
+
+    if ((err = pthread_mutex_trylock(&(queue->item[queue->write].mutex)))) {
+        if (err == EBUSY)
+            return SLLQ_EAGAIN;
+        errno = err;
+        return SLLQ_ERRNO;
+    }
+
+    if (queue->item[queue->write].have_data) {
+        queue->item[queue->write].data = data;
+        queue->item[queue->write].have_data = 1;
+        wrote = queue->write;
+        queue->write++;
+        queue->write &= queue->mask;
+
+        if (queue->readers) {
+            /* TODO: How to handle this? We did a successful read */
+            pthread_cond_signal(&(queue->read_cond));
+        }
+
+        ret = SLLQ_OK;
+    }
+    else {
+        wrote = queue->write;
+        ret = SLLQ_EAGAIN;
+    }
+
+    if ((err = pthread_mutex_unlock(&(queue->item[wrote].mutex)))) {
+        errno = err;
+        return SLLQ_ERRNO;
+    }
+
+    return ret;
+}
+
 int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime) {
     int err, locked = 0;
+    size_t wrote;
 
     sllq_assert(queue);
     if (!queue) {
@@ -280,14 +381,14 @@ int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime) {
     }
 
     while (1) {
-        while (!(queue->item[queue->write].have_data)) {
+        while (queue->item[queue->write].have_data) {
             if ((err = pthread_mutex_lock(&(queue->item[queue->write].mutex)))) {
                 errno = err;
                 return SLLQ_ERRNO;
             }
             locked = 1;
 
-            if (queue->item[queue->write].have_data)
+            if (!queue->item[queue->write].have_data)
                 break;
 
             queue->writers++;
@@ -302,7 +403,7 @@ int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime) {
             }
             queue->writers--;
 
-            if (queue->item[queue->write].have_data)
+            if (!queue->item[queue->write].have_data)
                 break;
 
             if ((err = pthread_mutex_unlock(&(queue->item[queue->write].mutex)))) {
@@ -322,8 +423,17 @@ int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime) {
             return SLLQ_ERRNO;
         }
 
+        if (queue->item[queue->write].have_data) {
+            if ((err = pthread_mutex_unlock(&(queue->item[queue->write].mutex)))) {
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+            continue;
+        }
+
         queue->item[queue->write].data = data;
         queue->item[queue->write].have_data = 1;
+        wrote = queue->write;
         queue->write++;
         queue->write &= queue->mask;
 
@@ -332,7 +442,7 @@ int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime) {
             pthread_cond_signal(&(queue->read_cond));
         }
 
-        if ((err = pthread_mutex_unlock(&(queue->item[queue->write].mutex)))) {
+        if ((err = pthread_mutex_unlock(&(queue->item[wrote].mutex)))) {
             errno = err;
             return SLLQ_ERRNO;
         }
@@ -348,6 +458,7 @@ int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime) {
 
 int sllq_shift(sllq_t* queue, void** data) {
     int err, locked = 0;
+    size_t read;
 
     sllq_assert(queue);
     if (!queue) {
@@ -363,7 +474,7 @@ int sllq_shift(sllq_t* queue, void** data) {
     }
 
     while (1) {
-        while (!(queue->item[queue->read].have_data)) {
+        while (!queue->item[queue->read].have_data) {
             if ((err = pthread_mutex_lock(&(queue->item[queue->read].mutex)))) {
                 errno = err;
                 return SLLQ_ERRNO;
@@ -402,9 +513,18 @@ int sllq_shift(sllq_t* queue, void** data) {
             return SLLQ_ERRNO;
         }
 
+        if (!queue->item[queue->read].have_data) {
+            if ((err = pthread_mutex_unlock(&(queue->item[queue->read].mutex)))) {
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+            continue;
+        }
+
         *data = queue->item[queue->read].data;
         queue->item[queue->read].data = 0;
         queue->item[queue->read].have_data = 0;
+        read = queue->read;
         queue->read++;
         queue->read &= queue->mask;
 
@@ -413,7 +533,7 @@ int sllq_shift(sllq_t* queue, void** data) {
             pthread_cond_signal(&(queue->write_cond));
         }
 
-        if ((err = pthread_mutex_unlock(&(queue->item[queue->read].mutex)))) {
+        if ((err = pthread_mutex_unlock(&(queue->item[read].mutex)))) {
             errno = err;
             return SLLQ_ERRNO;
         }
@@ -423,8 +543,61 @@ int sllq_shift(sllq_t* queue, void** data) {
     return SLLQ_OK;
 }
 
+int sllq_shift_nb(sllq_t* queue, void** data) {
+    int err, ret;
+    size_t read;
+
+    sllq_assert(queue);
+    if (!queue) {
+        return SLLQ_EINVAL;
+    }
+    sllq_assert(data);
+    if (!data) {
+        return SLLQ_EINVAL;
+    }
+    sllq_assert(queue->item);
+    if (!queue->item) {
+        return SLLQ_EINVAL;
+    }
+
+    if ((err = pthread_mutex_trylock(&(queue->item[queue->read].mutex)))) {
+        if (err == EBUSY)
+            return SLLQ_EAGAIN;
+        errno = err;
+        return SLLQ_ERRNO;
+    }
+
+    if (queue->item[queue->read].have_data) {
+        *data = queue->item[queue->read].data;
+        queue->item[queue->read].data = 0;
+        queue->item[queue->read].have_data = 0;
+        read = queue->read;
+        queue->read++;
+        queue->read &= queue->mask;
+
+        if (queue->writers) {
+            /* TODO: How to handle this? We did a successful read */
+            pthread_cond_signal(&(queue->write_cond));
+        }
+
+        ret = SLLQ_OK;
+    }
+    else {
+        read = queue->read;
+        ret = SLLQ_EAGAIN;
+    }
+
+    if ((err = pthread_mutex_unlock(&(queue->item[read].mutex)))) {
+        errno = err;
+        return SLLQ_ERRNO;
+    }
+
+    return ret;
+}
+
 int sllq_timed_shift(sllq_t* queue, void** data, const struct timespec* abstime) {
     int err, locked = 0;
+    size_t read;
 
     sllq_assert(queue);
     if (!queue) {
@@ -444,7 +617,7 @@ int sllq_timed_shift(sllq_t* queue, void** data, const struct timespec* abstime)
     }
 
     while (1) {
-        while (!(queue->item[queue->read].have_data)) {
+        while (!queue->item[queue->read].have_data) {
             if ((err = pthread_mutex_lock(&(queue->item[queue->read].mutex)))) {
                 errno = err;
                 return SLLQ_ERRNO;
@@ -486,9 +659,18 @@ int sllq_timed_shift(sllq_t* queue, void** data, const struct timespec* abstime)
             return SLLQ_ERRNO;
         }
 
+        if (!queue->item[queue->read].have_data) {
+            if ((err = pthread_mutex_unlock(&(queue->item[queue->read].mutex)))) {
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+            continue;
+        }
+
         *data = queue->item[queue->read].data;
         queue->item[queue->read].data = 0;
         queue->item[queue->read].have_data = 0;
+        read = queue->read;
         queue->read++;
         queue->read &= queue->mask;
 
@@ -497,7 +679,7 @@ int sllq_timed_shift(sllq_t* queue, void** data, const struct timespec* abstime)
             pthread_cond_signal(&(queue->write_cond));
         }
 
-        if ((err = pthread_mutex_unlock(&(queue->item[queue->read].mutex)))) {
+        if ((err = pthread_mutex_unlock(&(queue->item[read].mutex)))) {
             errno = err;
             return SLLQ_ERRNO;
         }
