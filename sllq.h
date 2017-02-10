@@ -23,6 +23,7 @@
 #define __sllq_h
 
 #include <pthread.h>
+#include <signal.h>
 #if SLLQ_ENABLE_ASSERT
 #include <assert.h>
 #define sllq_assert(x) assert(x)
@@ -42,6 +43,7 @@
 #define SLLQ_EINVAL         4
 #define SLLQ_ETIMEDOUT      5
 #define SLLQ_EBUSY          6
+#define SLLQ_EAGAIN         7
 
 #ifdef __cplusplus
 extern "C" {
@@ -55,11 +57,11 @@ int sllq_version_patch(void);
 #define SLLQ_ITEM_T_INIT { 0, 0, PTHREAD_MUTEX_INITIALIZER }
 typedef struct sllq_item sllq_item_t;
 struct sllq_item {
-    unsigned short  have_data : 1;
+    sig_atomic_t volatile   have_data : 1;
 
-    void*           data;
+    void*                   data;
 
-    pthread_mutex_t mutex;
+    pthread_mutex_t         mutex;
 };
 
 #define SLLQ_T_INIT { 0, 0, 0, 0, 0, PTHREAD_COND_INITIALIZER, 0, 0, PTHREAD_COND_INITIALIZER }
@@ -79,13 +81,18 @@ struct sllq {
     pthread_cond_t  write_cond;
 };
 
+typedef void (*sllq_item_callback_t)(void* data);
+
 size_t sllq_size(const sllq_t* queue);
 int sllq_set_size(sllq_t* queue, size_t size);
 int sllq_init(sllq_t* queue);
 int sllq_destroy(sllq_t* queue);
+int sllq_flush(sllq_t* queue, sllq_item_callback_t callback);
 int sllq_push(sllq_t* queue, void* data);
+int sllq_push_nb(sllq_t* queue, void* data);
 int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime);
 int sllq_shift(sllq_t* queue, void** data);
+int sllq_shift_nb(sllq_t* queue, void** data);
 int sllq_timed_shift(sllq_t* queue, void** data, const struct timespec* abstime);
 
 #ifdef __cplusplus
