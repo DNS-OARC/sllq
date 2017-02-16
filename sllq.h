@@ -44,6 +44,8 @@
 #define SLLQ_ETIMEDOUT      5
 #define SLLQ_EBUSY          6
 #define SLLQ_EAGAIN         7
+#define SLLQ_EMPTY          8
+#define SLLQ_FULL           9
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,31 +56,35 @@ int sllq_version_major(void);
 int sllq_version_minor(void);
 int sllq_version_patch(void);
 
-#define SLLQ_ITEM_T_INIT { 0, 0, PTHREAD_MUTEX_INITIALIZER }
+#define SLLQ_ITEM_T_INIT { \
+    0, 0, 0, \
+    0, \
+    PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER \
+}
 typedef struct sllq_item sllq_item_t;
 struct sllq_item {
-    sig_atomic_t volatile   have_data : 1;
+    unsigned short want_read : 1;
+    unsigned short want_write : 1;
+    unsigned short have_data : 1;
 
     void*                   data;
 
     pthread_mutex_t         mutex;
+    pthread_cond_t          cond;
 };
 
-#define SLLQ_T_INIT { 0, 0, 0, 0, 0, PTHREAD_COND_INITIALIZER, 0, 0, PTHREAD_COND_INITIALIZER }
+#define SLLQ_T_INIT { \
+    0, 0, 0, \
+    0, 0 \
+}
 typedef struct sllq sllq_t;
 struct sllq {
     sllq_item_t*    item;
-
     size_t          size;
     size_t          mask;
 
     size_t          read;
-    size_t          readers;
-    pthread_cond_t  read_cond;
-
     size_t          write;
-    size_t          writers;
-    pthread_cond_t  write_cond;
 };
 
 typedef void (*sllq_item_callback_t)(void* data);
@@ -88,12 +94,8 @@ int sllq_set_size(sllq_t* queue, size_t size);
 int sllq_init(sllq_t* queue);
 int sllq_destroy(sllq_t* queue);
 int sllq_flush(sllq_t* queue, sllq_item_callback_t callback);
-int sllq_push(sllq_t* queue, void* data);
-int sllq_push_nb(sllq_t* queue, void* data);
-int sllq_timed_push(sllq_t* queue, void* data, const struct timespec* abstime);
-int sllq_shift(sllq_t* queue, void** data);
-int sllq_shift_nb(sllq_t* queue, void** data);
-int sllq_timed_shift(sllq_t* queue, void** data, const struct timespec* abstime);
+int sllq_push(sllq_t* queue, void* data, const struct timespec* abstime);
+int sllq_shift(sllq_t* queue, void** data, const struct timespec* abstime);
 
 #ifdef __cplusplus
 }
