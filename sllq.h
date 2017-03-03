@@ -83,29 +83,51 @@ struct sllq_item {
     pthread_cond_t          cond;
 };
 
+typedef enum sllq_mode sllq_mode_t;
+enum sllq_mode {
+    SLLQ_MUTEX,
+    SLLQ_PIPE
+};
+
 #define SLLQ_T_INIT { \
-    0, 0, 0, \
-    0, 0 \
+    SLLQ_MUTEX, \
+    0, 0, 0, 0, 0 \
+    -1, -1 \
 }
 typedef struct sllq sllq_t;
 struct sllq {
+    sllq_mode_t     mode;
+
+    /* MUTEX mode */
     sllq_item_t*    item;
     size_t          size;
     size_t          mask;
-
     size_t          read;
     size_t          write;
+
+    /* PIPE mode */
+    int             read_pipe;
+    int             write_pipe;
 };
 
 typedef void (*sllq_item_callback_t)(void* data);
 
+sllq_t* sllq_new(void);
+void sllq_free(sllq_t* queue);
+
+sllq_mode_t sllq_mode(const sllq_t* queue);
+int sllq_set_mode(sllq_t* queue, sllq_mode_t mode);
 size_t sllq_size(const sllq_t* queue);
 int sllq_set_size(sllq_t* queue, size_t size);
+
 int sllq_init(sllq_t* queue);
 int sllq_destroy(sllq_t* queue);
+
 int sllq_flush(sllq_t* queue, sllq_item_callback_t callback);
+
 int sllq_push(sllq_t* queue, void* data, const struct timespec* abstime);
 int sllq_shift(sllq_t* queue, void** data, const struct timespec* abstime);
+
 const char* sllq_strerror(int errnum);
 
 #ifdef __cplusplus
