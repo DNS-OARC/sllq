@@ -18,5 +18,6 @@
 # along with sllq.  If not, see <http://www.gnu.org/licenses/>.
 
 AC_DEFUN([AX_SLLQ], [
+    AC_CHECK_SIZEOF(void*)
     AX_PTHREAD
 ])

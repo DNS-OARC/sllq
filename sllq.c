@@ -26,7 +26,10 @@
 
 #include <stdlib.h>
 #include <errno.h>
-#include <sched.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <string.h>
 
 /*
  * Version
@@ -50,8 +53,46 @@ inline int sllq_version_patch(void) {
 }
 
 /*
+ * New/Free
+ */
+
+static sllq_t _sllq_t_defaults = SLLQ_T_INIT;
+
+sllq_t* sllq_new(void) {
+    sllq_t* queue = calloc(1, sizeof(sllq_t));
+
+    if (queue) {
+        memcpy(queue, &_sllq_t_defaults, sizeof(sllq_t));
+    }
+
+    return queue;
+}
+
+void sllq_free(sllq_t* queue) {
+    if (queue) {
+        free(queue);
+    }
+}
+
+/*
  * Get/Set
  */
+
+inline sllq_mode_t sllq_mode(const sllq_t* queue) {
+    sllq_assert(queue);
+    return queue->mode;
+}
+
+int sllq_set_mode(sllq_t* queue, sllq_mode_t mode) {
+    sllq_assert(queue);
+    if (!queue) {
+        return SLLQ_EINVAL;
+    }
+
+    queue->mode = mode;
+
+    return SLLQ_OK;
+}
 
 inline size_t sllq_size(const sllq_t* queue) {
     sllq_assert(queue);
@@ -95,87 +136,149 @@ int sllq_set_size(sllq_t* queue, size_t size) {
  */
 
 int sllq_init(sllq_t* queue) {
-    size_t n;
-    int err;
-    sllq_item_t* item;
-
     sllq_assert(queue);
     if (!queue) {
         return SLLQ_EINVAL;
     }
-    if (!queue->size) {
-        return SLLQ_EINVAL;
-    }
 
-    if (queue->item) {
-        return SLLQ_EBUSY;
-    }
+    if (queue->mode == SLLQ_MUTEX) {
+        size_t n;
+        int err;
+        sllq_item_t* item;
 
-    if (!(item = calloc(queue->size, sizeof(sllq_item_t)))) {
-        sllq_destroy(queue);
-        return SLLQ_ENOMEM;
-    }
+        if (!queue->size) {
+            return SLLQ_EINVAL;
+        }
+        if (queue->item) {
+            return SLLQ_EBUSY;
+        }
 
-    for (n = 0; n < queue->size; n++) {
-        if ((err = pthread_mutex_init(&(item[n].mutex), 0))) {
-            for (n--; n; n--) {
-                pthread_mutex_destroy(&(item[n].mutex));
-                pthread_cond_destroy(&(item[n].cond));
-            }
+        if (!(item = calloc(queue->size, sizeof(sllq_item_t)))) {
             sllq_destroy(queue);
-            errno = err;
+            return SLLQ_ENOMEM;
+        }
+
+        for (n = 0; n < queue->size; n++) {
+            if ((err = pthread_mutex_init(&(item[n].mutex), 0))) {
+                for (n--; n; n--) {
+                    pthread_mutex_destroy(&(item[n].mutex));
+                    pthread_cond_destroy(&(item[n].cond));
+                }
+                sllq_destroy(queue);
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+            if ((err = pthread_cond_init(&(item[n].cond), 0))) {
+                pthread_mutex_destroy(&(item[n].mutex));
+                for (n--; n; n--) {
+                    pthread_mutex_destroy(&(item[n].mutex));
+                    pthread_cond_destroy(&(item[n].cond));
+                }
+                sllq_destroy(queue);
+                errno = err;
+                return SLLQ_ERRNO;
+            }
+        }
+
+        queue->item = item;
+        queue->read = 0;
+        queue->write = 0;
+
+        return SLLQ_OK;
+    }
+    else if (queue->mode == SLLQ_PIPE) {
+        int fd[2];
+        int flags, pipe_buf, errnum;
+
+        if (pipe(fd)) {
             return SLLQ_ERRNO;
         }
-        if ((err = pthread_cond_init(&(item[n].cond), 0))) {
-            pthread_mutex_destroy(&(item[n].mutex));
-            for (n--; n; n--) {
-                pthread_mutex_destroy(&(item[n].mutex));
-                pthread_cond_destroy(&(item[n].cond));
-            }
-            sllq_destroy(queue);
-            errno = err;
+
+        if ((flags = fcntl(fd[0], F_GETFL)) == -1
+            || fcntl(fd[0], F_SETFL, flags | O_NONBLOCK))
+        {
+            errnum = errno;
+            close(fd[0]);
+            close(fd[1]);
+            errno = errnum;
             return SLLQ_ERRNO;
         }
+
+        if ((flags = fcntl(fd[1], F_GETFL)) == -1
+            || fcntl(fd[1], F_SETFL, flags | O_NONBLOCK))
+        {
+            errnum = errno;
+            close(fd[0]);
+            close(fd[1]);
+            errno = errnum;
+            return SLLQ_ERRNO;
+        }
+
+        errno = 0;
+        if ((pipe_buf = fpathconf(fd[1], _PC_PIPE_BUF)) < SIZEOF_VOIDP) {
+            errnum = errno;
+            close(fd[0]);
+            close(fd[1]);
+            errno = errnum;
+            if (errno)
+                return SLLQ_ERRNO;
+            return SLLQ_EINVAL;
+        }
+
+        queue->read_pipe = fd[0];
+        queue->write_pipe = fd[1];
+
+        return SLLQ_OK;
     }
 
-    queue->item = item;
-    queue->read = 0;
-    queue->write = 0;
-
-    return SLLQ_OK;
+    return SLLQ_EINVAL;
 }
 
 int sllq_destroy(sllq_t* queue) {
-    int err;
-
     sllq_assert(queue);
     if (!queue) {
         return SLLQ_EINVAL;
     }
 
-    if (queue->item) {
-        size_t n;
+    if (queue->mode == SLLQ_MUTEX) {
+        int err;
 
-        for (n = 0; n < queue->size; n++) {
-            if ((err = pthread_mutex_destroy(&(queue->item[n].mutex)))) {
-                errno = err;
-                return SLLQ_ERRNO;
+        if (queue->item) {
+            size_t n;
+
+            for (n = 0; n < queue->size; n++) {
+                if ((err = pthread_mutex_destroy(&(queue->item[n].mutex)))) {
+                    errno = err;
+                    return SLLQ_ERRNO;
+                }
+                if ((err = pthread_cond_destroy(&(queue->item[n].cond)))) {
+                    errno = err;
+                    return SLLQ_ERRNO;
+                }
             }
-            if ((err = pthread_cond_destroy(&(queue->item[n].cond)))) {
-                errno = err;
-                return SLLQ_ERRNO;
-            }
+            free(queue->item);
+            queue->item = 0;
         }
-        free(queue->item);
-        queue->item = 0;
+
+        return SLLQ_OK;
+    }
+    else if (queue->mode == SLLQ_PIPE) {
+        if (queue->write_pipe > -1) {
+            close(queue->write_pipe);
+            queue->write_pipe = -1;
+        }
+        if (queue->read_pipe > -1) {
+            close(queue->read_pipe);
+            queue->read_pipe = -1;
+        }
+
+        return SLLQ_OK;
     }
 
-    return SLLQ_OK;
+    return SLLQ_EINVAL;
 }
 
 int sllq_flush(sllq_t* queue, sllq_item_callback_t callback) {
-    int err;
-
     sllq_assert(queue);
     if (!queue) {
         return SLLQ_EINVAL;
@@ -185,43 +288,49 @@ int sllq_flush(sllq_t* queue, sllq_item_callback_t callback) {
         return SLLQ_EINVAL;
     }
 
-    if (queue->item) {
-        size_t n;
+    if (queue->mode == SLLQ_MUTEX) {
+        int err;
 
-        for (n = 0; n < queue->size; n++) {
-            sllq_item_t* item = &(queue->item[n]);
+        if (queue->item) {
+            size_t n;
 
-            if ((err = pthread_mutex_lock(&(item->mutex)))) {
-                errno = err;
-                return SLLQ_ERRNO;
+            for (n = 0; n < queue->size; n++) {
+                sllq_item_t* item = &(queue->item[n]);
+
+                if ((err = pthread_mutex_lock(&(item->mutex)))) {
+                    errno = err;
+                    return SLLQ_ERRNO;
+                }
+
+                if (item->have_data) {
+                    callback(item->data);
+                    item->data = 0;
+                    item->have_data = 0;
+                }
+
+                if ((err = pthread_mutex_unlock(&(item->mutex)))) {
+                    errno = err;
+                    return SLLQ_ERRNO;
+                }
             }
-
-            if (item->have_data) {
-                callback(item->data);
-                item->data = 0;
-                item->have_data = 0;
-            }
-
-            if ((err = pthread_mutex_unlock(&(item->mutex)))) {
-                errno = err;
-                return SLLQ_ERRNO;
-            }
+            free(queue->item);
+            queue->item = 0;
         }
-        free(queue->item);
-        queue->item = 0;
+
+        return SLLQ_OK;
+    }
+    else if (queue->mode == SLLQ_PIPE) {
+        /* TODO */
     }
 
-    return SLLQ_OK;
+    return SLLQ_EINVAL;
 }
 
 /*
  * Queue write
  */
 
-int sllq_push(sllq_t* queue, void* data, const struct timespec* abstime) {
-    int err, ret = SLLQ_FULL;
-    sllq_item_t* item;
-
+int sllq_push(sllq_t* queue, void* data, const struct timespec* timespec) {
     sllq_assert(queue);
     if (!queue) {
         return SLLQ_EINVAL;
@@ -230,79 +339,146 @@ int sllq_push(sllq_t* queue, void* data, const struct timespec* abstime) {
     if (!data) {
         return SLLQ_EINVAL;
     }
-    sllq_assert(queue->item);
-    if (!queue->item) {
-        return SLLQ_EINVAL;
-    }
 
-    item = &(queue->item[queue->write]);
+    if (queue->mode == SLLQ_MUTEX) {
+        int err, ret = SLLQ_FULL;
+        sllq_item_t* item;
 
-    if ((err = pthread_mutex_trylock(&(item->mutex)))) {
-        if (err == EBUSY)
-            return SLLQ_EAGAIN;
-        errno = err;
-        return SLLQ_ERRNO;
-    }
+        sllq_assert(queue->item);
+        if (!queue->item) {
+            return SLLQ_EINVAL;
+        }
 
-    if (abstime) {
-        while (item->have_data) {
-            if (item->want_write) {
-                pthread_mutex_unlock(&(item->mutex));
-                return SLLQ_EINVAL;
-            }
-            if (item->want_read) {
-                if ((err = pthread_cond_signal(&(item->cond)))) {
+        item = &(queue->item[queue->write]);
+
+        if ((err = pthread_mutex_trylock(&(item->mutex)))) {
+            if (err == EBUSY)
+                return SLLQ_EAGAIN;
+            errno = err;
+            return SLLQ_ERRNO;
+        }
+
+        if (timespec) {
+            while (item->have_data) {
+                if (item->want_write) {
                     pthread_mutex_unlock(&(item->mutex));
+                    return SLLQ_EINVAL;
+                }
+                if (item->want_read) {
+                    if ((err = pthread_cond_signal(&(item->cond)))) {
+                        pthread_mutex_unlock(&(item->mutex));
+                        errno = err;
+                        return SLLQ_ERRNO;
+                    }
+                }
+
+                item->want_write = 1;
+                err = pthread_cond_timedwait(&(item->cond), &(item->mutex), timespec);
+                item->want_write = 0;
+
+                if (err) {
+                    pthread_mutex_unlock(&(item->mutex));
+                    if (err == ETIMEDOUT) {
+                        return SLLQ_ETIMEDOUT;
+                    }
                     errno = err;
                     return SLLQ_ERRNO;
                 }
             }
+        }
 
-            item->want_write = 1;
-            err = pthread_cond_timedwait(&(item->cond), &(item->mutex), abstime);
-            item->want_write = 0;
+        if (!item->have_data) {
+            item->data = data;
+            item->have_data = 1;
 
-            if (err) {
-                pthread_mutex_unlock(&(item->mutex));
-                if (err == ETIMEDOUT) {
-                    return SLLQ_ETIMEDOUT;
+            queue->write++;
+            queue->write &= queue->mask;
+
+            if (item->want_read) {
+                /* TODO: How to handle errors? We did a successful push */
+                pthread_cond_signal(&(item->cond));
+            }
+            ret = SLLQ_OK;
+        }
+
+        if ((err = pthread_mutex_unlock(&(item->mutex)))) {
+            errno = err;
+            return SLLQ_ERRNO;
+        }
+
+        return ret;
+    }
+    else if (queue->mode == SLLQ_PIPE) {
+        ssize_t n;
+
+        if (queue->write_pipe < 0) {
+            return SLLQ_EINVAL;
+        }
+
+        if ((n = write(queue->write_pipe, (void*)&data, sizeof(data))) < 0) {
+            struct pollfd pfd;
+            int err, timeout;
+
+            switch (errno) {
+                case EAGAIN:
+#if EAGAIN != EWOULDBLOCK
+                case EWOULDBLOCK:
+#endif
+                    if (timespec)
+                        break;
+                    return SLLQ_EAGAIN;
+
+                default:
+                    return SLLQ_ERRNO;
+            }
+
+            pfd.fd = queue->write_pipe;
+            pfd.events = POLLOUT;
+            pfd.revents = 0;
+
+            timeout = timespec->tv_nsec / 1000;
+            if (timeout < 1)
+                timeout = 1;
+            else if (timeout > 999999)
+                timeout = 1000000;
+
+            if ((err = poll(&pfd, 1, timeout)) < 0) {
+                return SLLQ_ERRNO;
+            }
+            else if (!err) {
+                return SLLQ_ETIMEDOUT;
+            }
+
+            if ((n = write(queue->write_pipe, (void*)&data, sizeof(data))) < 0) {
+                switch (errno) {
+                    case EAGAIN:
+#if EAGAIN != EWOULDBLOCK
+                    case EWOULDBLOCK:
+#endif
+                        return SLLQ_EAGAIN;
+
+                    default:
+                        break;
                 }
-                errno = err;
                 return SLLQ_ERRNO;
             }
         }
-    }
-
-    if (!item->have_data) {
-        item->data = data;
-        item->have_data = 1;
-
-        queue->write++;
-        queue->write &= queue->mask;
-
-        if (item->want_read) {
-            /* TODO: How to handle errors? We did a successful push */
-            pthread_cond_signal(&(item->cond));
+        if (n != sizeof(data)) {
+            close(queue->write_pipe);
+            return SLLQ_ERROR;
         }
-        ret = SLLQ_OK;
+
+        return SLLQ_OK;
     }
 
-    if ((err = pthread_mutex_unlock(&(item->mutex)))) {
-        errno = err;
-        return SLLQ_ERRNO;
-    }
-
-    return ret;
+    return SLLQ_EINVAL;
 }
 
 /*
  * Queue read
  */
 
-int sllq_shift(sllq_t* queue, void** data, const struct timespec* abstime) {
-    int err, ret = SLLQ_EMPTY;
-    sllq_item_t* item;
-
+int sllq_shift(sllq_t* queue, void** data, const struct timespec* timespec) {
     sllq_assert(queue);
     if (!queue) {
         return SLLQ_EINVAL;
@@ -311,71 +487,141 @@ int sllq_shift(sllq_t* queue, void** data, const struct timespec* abstime) {
     if (!data) {
         return SLLQ_EINVAL;
     }
-    sllq_assert(queue->item);
-    if (!queue->item) {
-        return SLLQ_EINVAL;
-    }
 
-    item = &(queue->item[queue->read]);
+    if (queue->mode == SLLQ_MUTEX) {
+        int err, ret = SLLQ_EMPTY;
+        sllq_item_t* item;
 
-    if ((err = pthread_mutex_trylock(&(item->mutex)))) {
-        if (err == EBUSY)
-            return SLLQ_EAGAIN;
-        errno = err;
-        return SLLQ_ERRNO;
-    }
+        sllq_assert(queue->item);
+        if (!queue->item) {
+            return SLLQ_EINVAL;
+        }
 
-    if (abstime) {
-        while (!item->have_data) {
-            if (item->want_read) {
-                pthread_mutex_unlock(&(item->mutex));
-                return SLLQ_EINVAL;
-            }
-            if (item->want_write) {
-                if ((err = pthread_cond_signal(&(item->cond)))) {
+        item = &(queue->item[queue->read]);
+
+        if ((err = pthread_mutex_trylock(&(item->mutex)))) {
+            if (err == EBUSY)
+                return SLLQ_EAGAIN;
+            errno = err;
+            return SLLQ_ERRNO;
+        }
+
+        if (timespec) {
+            while (!item->have_data) {
+                if (item->want_read) {
                     pthread_mutex_unlock(&(item->mutex));
+                    return SLLQ_EINVAL;
+                }
+                if (item->want_write) {
+                    if ((err = pthread_cond_signal(&(item->cond)))) {
+                        pthread_mutex_unlock(&(item->mutex));
+                        errno = err;
+                        return SLLQ_ERRNO;
+                    }
+                }
+
+                item->want_read = 1;
+                err = pthread_cond_timedwait(&(item->cond), &(item->mutex), timespec);
+                item->want_read = 0;
+
+                if (err) {
+                    pthread_mutex_unlock(&(item->mutex));
+                    if (err == ETIMEDOUT) {
+                        return SLLQ_ETIMEDOUT;
+                    }
                     errno = err;
                     return SLLQ_ERRNO;
                 }
             }
+        }
 
-            item->want_read = 1;
-            err = pthread_cond_timedwait(&(item->cond), &(item->mutex), abstime);
-            item->want_read = 0;
+        if (item->have_data) {
+            *data = item->data;
+            item->data = 0;
+            item->have_data = 0;
 
-            if (err) {
-                pthread_mutex_unlock(&(item->mutex));
-                if (err == ETIMEDOUT) {
-                    return SLLQ_ETIMEDOUT;
+            queue->read++;
+            queue->read &= queue->mask;
+
+            if (item->want_write) {
+                /* TODO: How to handle errors? We did a successful shift */
+                pthread_cond_signal(&(item->cond));
+            }
+
+            ret = SLLQ_OK;
+        }
+
+        if ((err = pthread_mutex_unlock(&(item->mutex)))) {
+            errno = err;
+            return SLLQ_ERRNO;
+        }
+
+        return ret;
+    }
+    else if (queue->mode == SLLQ_PIPE) {
+        ssize_t n;
+
+        if (queue->read_pipe < 0) {
+            return SLLQ_EINVAL;
+        }
+
+        if ((n = read(queue->read_pipe, (void*)data, sizeof(data))) < 0) {
+            struct pollfd pfd;
+            int err, timeout;
+
+            switch (errno) {
+                case EAGAIN:
+#if EAGAIN != EWOULDBLOCK
+                case EWOULDBLOCK:
+#endif
+                    if (timespec)
+                        break;
+                    return SLLQ_EAGAIN;
+
+                default:
+                    return SLLQ_ERRNO;
+            }
+
+            pfd.fd = queue->read_pipe;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+
+            timeout = timespec->tv_nsec / 1000;
+            if (timeout < 1)
+                timeout = 1;
+            else if (timeout > 999999)
+                timeout = 1000000;
+
+            if ((err = poll(&pfd, 1, timeout)) < 0) {
+                return SLLQ_ERRNO;
+            }
+            else if (!err) {
+                return SLLQ_ETIMEDOUT;
+            }
+
+            if ((n = read(queue->read_pipe, (void*)data, sizeof(data))) < 0) {
+                switch (errno) {
+                    case EAGAIN:
+#if EAGAIN != EWOULDBLOCK
+                    case EWOULDBLOCK:
+#endif
+                        return SLLQ_EAGAIN;
+
+                    default:
+                        break;
                 }
-                errno = err;
                 return SLLQ_ERRNO;
             }
         }
-    }
-
-    if (item->have_data) {
-        *data = item->data;
-        item->data = 0;
-        item->have_data = 0;
-
-        queue->read++;
-        queue->read &= queue->mask;
-
-        if (item->want_write) {
-            /* TODO: How to handle errors? We did a successful shift */
-            pthread_cond_signal(&(item->cond));
+        if (n != sizeof(data)) {
+            close(queue->read_pipe);
+            return SLLQ_ERROR;
         }
 
-        ret = SLLQ_OK;
+        return SLLQ_OK;
     }
 
-    if ((err = pthread_mutex_unlock(&(item->mutex)))) {
-        errno = err;
-        return SLLQ_ERRNO;
-    }
-
-    return ret;
+    return SLLQ_EINVAL;
 }
 
 /*

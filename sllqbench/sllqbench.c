@@ -28,10 +28,12 @@
 #include <time.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <string.h>
 
 void usage(void) {
     printf(
 "usage: sllqbench [options]\n"
+" -m mode            use mode; mutex, pipe\n"
 " -n num             number of push/shift to do\n"
 " -V                 display version and exit\n"
 " -h                 this\n"
@@ -47,10 +49,10 @@ struct context {
 
 void* push(void* vp) {
     struct context* ctx = (struct context*)vp;
-    struct timespec wait;
+    struct timespec wait = { 0, 500000 };
 
     while (ctx->num) {
-        if (clock_gettime(CLOCK_REALTIME, &wait)) {
+        if (sllq_mode(ctx->q) == SLLQ_MUTEX && clock_gettime(CLOCK_REALTIME, &wait)) {
             ctx->err = -1;
             return 0;
         }
@@ -70,11 +72,11 @@ void* push(void* vp) {
 
 void* shift(void* vp) {
     struct context* ctx = (struct context*)vp;
-    struct timespec wait;
+    struct timespec wait = { 0, 500000 };
     void* data;
 
     while (ctx->num) {
-        if (clock_gettime(CLOCK_REALTIME, &wait)) {
+        if (sllq_mode(ctx->q) == SLLQ_MUTEX && clock_gettime(CLOCK_REALTIME, &wait)) {
             ctx->err = -1;
             return 0;
         }
@@ -95,13 +97,26 @@ void* shift(void* vp) {
 int main(int argc, char** argv) {
     int opt, err;
     sllq_t q = SLLQ_T_INIT;
+    sllq_mode_t mode = SLLQ_MUTEX;
     struct context a, b;
     size_t num = 100;
     struct timespec start, end;
     float fraction;
 
-    while ((opt = getopt(argc, argv, "n:hV")) != -1) {
+    while ((opt = getopt(argc, argv, "m:n:hV")) != -1) {
         switch (opt) {
+        case 'm':
+            if (!strcmp(optarg, "mutex")) {
+                mode = SLLQ_MUTEX;
+            }
+            else if (!strcmp(optarg, "pipe")) {
+                mode = SLLQ_PIPE;
+            }
+            else {
+                usage();
+                return 1;
+            }
+            break;
         case 'n':
             num = strtoul(optarg, 0, 10);
             break;
@@ -117,6 +132,10 @@ int main(int argc, char** argv) {
         }
     }
 
+    if ((err = sllq_set_mode(&q, mode))) {
+        fprintf(stderr, "sllq_set_mode(): %s\n", sllq_strerror(err));
+        return 2;
+    }
     if ((err = sllq_set_size(&q, 64))) {
         fprintf(stderr, "sllq_set_size(): %s\n", sllq_strerror(err));
         return 2;
