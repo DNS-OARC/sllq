@@ -1,5 +1,7 @@
 # Semi Lock-Less Queue
 
+[![Build Status](https://travis-ci.org/DNS-OARC/sllq.svg?branch=develop)](https://travis-ci.org/DNS-OARC/sllq) [![Coverity Scan Build Status](https://scan.coverity.com/projects/11847/badge.svg)](https://scan.coverity.com/projects/dns-oarc-sllq)
+
 ## Author(s)
 
 Jerry Lundström <jerry@dns-oarc.net>

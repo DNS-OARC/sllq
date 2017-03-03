@@ -47,6 +47,16 @@
 #define SLLQ_EMPTY          8
 #define SLLQ_FULL           9
 
+#define SLLQ_ERROR_STR      "generic error"
+#define SLLQ_ERRNO_STR      "system error"
+#define SLLQ_ENOMEM_STR     "out of memory"
+#define SLLQ_EINVAL_STR     "invalid argument"
+#define SLLQ_ETIMEDOUT_STR  "timed out"
+#define SLLQ_EBUSY_STR      "busy"
+#define SLLQ_EAGAIN_STR     "try again"
+#define SLLQ_EMPTY_STR      "queue is empty"
+#define SLLQ_FULL_STR       "queue is full"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -96,6 +106,7 @@ int sllq_destroy(sllq_t* queue);
 int sllq_flush(sllq_t* queue, sllq_item_callback_t callback);
 int sllq_push(sllq_t* queue, void* data, const struct timespec* abstime);
 int sllq_shift(sllq_t* queue, void** data, const struct timespec* abstime);
+const char* sllq_strerror(int errnum);
 
 #ifdef __cplusplus
 }

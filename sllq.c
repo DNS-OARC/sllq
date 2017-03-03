@@ -377,3 +377,33 @@ int sllq_shift(sllq_t* queue, void** data, const struct timespec* abstime) {
 
     return ret;
 }
+
+/*
+ * Errors
+ */
+
+const char* sllq_strerror(int errnum) {
+    switch (errnum) {
+        case SLLQ_OK:
+            return 0;
+        case SLLQ_ERROR:
+            return SLLQ_ERROR_STR;
+        case SLLQ_ERRNO:
+            return SLLQ_ERRNO_STR;
+        case SLLQ_ENOMEM:
+            return SLLQ_ENOMEM_STR;
+        case SLLQ_EINVAL:
+            return SLLQ_EINVAL_STR;
+        case SLLQ_ETIMEDOUT:
+            return SLLQ_ETIMEDOUT_STR;
+        case SLLQ_EBUSY:
+            return SLLQ_EBUSY_STR;
+        case SLLQ_EAGAIN:
+            return SLLQ_EAGAIN_STR;
+        case SLLQ_EMPTY:
+            return SLLQ_EMPTY_STR;
+        case SLLQ_FULL:
+            return SLLQ_FULL_STR;
+    }
+    return "UNKNOWN";
+}
