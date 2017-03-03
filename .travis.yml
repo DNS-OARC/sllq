@@ -1,11 +1,16 @@
 language: c
 compiler:
-  - clang
   - gcc
-script:
-  - cd sllqbench
-  - sh autogen.sh
-  - ./configure
-  - make
-  - ./sllqbench -h
-  - make test
+env:
+  global:
+   - secure: "LCBWlCbpMmeMT3Kif8XgY/eLwIk+gL57tmYlqdDFteYb7zEtSZjSaJ3IjD2MZVCMcq8Alo5pueECXKzeAgH4MPoKY03oUTuc3skdxjgaHW3A+lgHtktdRwQJtwi/fX1SZe3RElzONShB0CU5OTcw9k9dSyCJYWFhl+B8Mlx/O4hCGs6hkiH+3q23iKQitr48PcEpSNKunsXAQn/UascKdnWZrsO1ffq2yQU+wFJAMO2PxA1HbEL7KBv+sky8LPMipkLAsOayR36yHlXFotLiPHxRphERMkLYjqz/jS6i9ulV4F0cGuWMJ5phjU1lJKr2J8hN2eyr37G/fLOTyh1fC31/GU9cWfmBWZt+0/dyU4920X5GZDOxwBPzaQI5tnQ+T0HqhEYZBUfimo9FjzYXxuVciVHpfTUqAUO5YB7+P8lwE5K2ZvszFyExETH95yZerAVkWabNuZlZb45RbMCWnPgDIDwuuxIxi2z8+oa8LXN0WQ5bW0BqAWZj0OxuSg4HmQnrmtHI77QT+BHJFc/Ca1qigcYh7VYrAEMeb+8tuZwUftqNlE9SMZuq9aXGrUpqQ923UsHk1Y3HV7pLa4GsqTZU7jUBgBSvyleXIPZik6WsHNwb3B6TrW8OUefqtAzV7/irubHzVQTJqWpnPhzSskwB3QBRYjLhKIw6bbEHu0s="
+addons:
+  coverity_scan:
+    project:
+      name: "DNS-OARC/sllq"
+      description: "Build submitted via Travis CI"
+    notification_email: lundstrom.jerry@gmail.com
+    build_command_prepend: "(cd sllqbench && ./autogen.sh && ./configure && make clean)"
+    build_command: "./cov.sh"
+    branch_pattern: coverity_scan
+script: true
