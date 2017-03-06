@@ -561,13 +561,14 @@ int sllq_shift(sllq_t* queue, void** data, const struct timespec* timespec) {
         return ret;
     }
     else if (queue->mode == SLLQ_PIPE) {
+        void* _data = 0;
         ssize_t n;
 
         if (queue->read_pipe < 0) {
             return SLLQ_EINVAL;
         }
 
-        if ((n = read(queue->read_pipe, (void*)data, sizeof(data))) < 0) {
+        if ((n = read(queue->read_pipe, &_data, sizeof(_data))) < 0) {
             struct pollfd pfd;
             int err, timeout;
 
@@ -601,7 +602,7 @@ int sllq_shift(sllq_t* queue, void** data, const struct timespec* timespec) {
                 return SLLQ_ETIMEDOUT;
             }
 
-            if ((n = read(queue->read_pipe, (void*)data, sizeof(data))) < 0) {
+            if ((n = read(queue->read_pipe, &_data, sizeof(_data))) < 0) {
                 switch (errno) {
                     case EAGAIN:
 #if EAGAIN != EWOULDBLOCK
@@ -615,10 +616,12 @@ int sllq_shift(sllq_t* queue, void** data, const struct timespec* timespec) {
                 return SLLQ_ERRNO;
             }
         }
-        if (n != sizeof(data)) {
+        if (n != sizeof(_data)) {
             close(queue->read_pipe);
             return SLLQ_ERROR;
         }
+
+        *data = _data;
 
         return SLLQ_OK;
     }
