@@ -166,6 +166,7 @@ int sllq_init(sllq_t* queue) {
                 }
                 sllq_destroy(queue);
                 errno = err;
+                free(item);
                 return SLLQ_ERRNO;
             }
             if ((err = pthread_cond_init(&(item[n].cond), 0))) {
@@ -176,6 +177,7 @@ int sllq_init(sllq_t* queue) {
                 }
                 sllq_destroy(queue);
                 errno = err;
+                free(item);
                 return SLLQ_ERRNO;
             }
         }
