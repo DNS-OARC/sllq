@@ -24,19 +24,17 @@ CLEANFILES = sllq.c sllq.h
 
 SUBDIRS = test
 
-AM_CFLAGS = -Wall -I$(srcdir) $(PTHREAD_CFLAGS)
+AM_CFLAGS = -Wall -I$(srcdir) -I$(top_srcdir)/../ $(PTHREAD_CFLAGS)
 
 bin_PROGRAMS      = sllqbench
 
-sllqbench_SOURCES = sllqbench.c sllq.c sllq.h
+sllqbench_SOURCES = sllqbench.c sllq.c
 sllqbench_LDADD   = $(PTHREAD_LIBS)
 
-sllqbench.c: sllq.h
-
 sllq.c: $(top_srcdir)/../sllq.c sllq.h
-	cp "$(top_srcdir)/../sllq.c" "$(srcdir)"
+	cp "$(top_srcdir)/../sllq.c" .
 
 sllq.h: $(top_srcdir)/../sllq.h
-	cp "$(top_srcdir)/../sllq.h" "$(srcdir)"
+	cp "$(top_srcdir)/../sllq.h" .
 
 test: check
