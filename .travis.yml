@@ -1,0 +1,11 @@
+language: c
+compiler:
+  - clang
+  - gcc
+script:
+  - cd sllqbench
+  - sh autogen.sh
+  - ./configure
+  - make
+  - ./sllqbench -h
+  - make test
