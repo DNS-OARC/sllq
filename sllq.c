@@ -315,14 +315,40 @@ int sllq_flush(sllq_t* queue, sllq_item_callback_t callback) {
                     return SLLQ_ERRNO;
                 }
             }
-            free(queue->item);
-            queue->item = 0;
         }
 
         return SLLQ_OK;
     }
     else if (queue->mode == SLLQ_PIPE) {
-        /* TODO */
+        void* data = 0;
+        ssize_t n;
+
+        if (queue->read_pipe > -1) {
+            while ((n = read(queue->read_pipe, &data, sizeof(data))) > 0) {
+                if (n != sizeof(data)) {
+                    close(queue->read_pipe);
+                    queue->read_pipe = -1;
+                    return SLLQ_ERROR;
+                }
+
+                callback(data);
+            }
+
+            if (n < 0) {
+                switch (errno) {
+                    case EAGAIN:
+#if EAGAIN != EWOULDBLOCK
+                    case EWOULDBLOCK:
+#endif
+                        break;
+
+                    default:
+                        return SLLQ_ERRNO;
+                }
+            }
+        }
+
+        return SLLQ_OK;
     }
 
     return SLLQ_EINVAL;
@@ -467,6 +493,7 @@ int sllq_push(sllq_t* queue, void* data, const struct timespec* timespec) {
         }
         if (n != sizeof(data)) {
             close(queue->write_pipe);
+            queue->write_pipe = -1;
             return SLLQ_ERROR;
         }
 
@@ -618,6 +645,7 @@ int sllq_shift(sllq_t* queue, void** data, const struct timespec* timespec) {
         }
         if (n != sizeof(_data)) {
             close(queue->read_pipe);
+            queue->read_pipe = -1;
             return SLLQ_ERROR;
         }
 
