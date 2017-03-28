@@ -1,0 +1,17 @@
+2017-03-28 Jerry Lundström
+
+    Release 1.0.0
+
+    First release of SLLQ.
+
+    2bf14bd Add about and usage
+    137455f Flush, pipe error handling
+    7740795 Fix automake files to handle building in build dir
+    c6a2ba1 Fix CID 1414682
+    c9a9d74 Fix CID 1414670
+    b584986 Add new, free and pipe mode
+    c98b53a Add example/benchmark program, m4 and travis
+    f196bc3 Rework push/shift
+    54f731d Fixes, flush and non-blocking push/shift
+    2b9f43e First implementation (draft/testing)
+    a12838b Initial commit
