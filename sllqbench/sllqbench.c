@@ -30,25 +30,26 @@
 #include <errno.h>
 #include <string.h>
 
-void usage(void) {
+void usage(void)
+{
     printf(
-"usage: sllqbench [options]\n"
-" -m mode            use mode; mutex, pipe\n"
-" -n num             number of push/shift to do\n"
-" -V                 display version and exit\n"
-" -h                 this\n"
-    );
+        "usage: sllqbench [options]\n"
+        " -m mode            use mode; mutex, pipe\n"
+        " -n num             number of push/shift to do\n"
+        " -V                 display version and exit\n"
+        " -h                 this\n");
 }
 
 struct context {
-    pthread_t   thr;
-    sllq_t*     q;
-    size_t      num;
-    int         err;
+    pthread_t thr;
+    sllq_t*   q;
+    size_t    num;
+    int       err;
 };
 
-void* push(void* vp) {
-    struct context* ctx = (struct context*)vp;
+void* push(void* vp)
+{
+    struct context* ctx  = (struct context*)vp;
     struct timespec wait = { 0, 500000 };
 
     while (ctx->num) {
@@ -70,10 +71,11 @@ void* push(void* vp) {
     return 0;
 }
 
-void* shift(void* vp) {
-    struct context* ctx = (struct context*)vp;
+void* shift(void* vp)
+{
+    struct context* ctx  = (struct context*)vp;
     struct timespec wait = { 0, 500000 };
-    void* data;
+    void*           data;
 
     while (ctx->num) {
         if (sllq_mode(ctx->q) == SLLQ_MUTEX && clock_gettime(CLOCK_REALTIME, &wait)) {
@@ -94,25 +96,24 @@ void* shift(void* vp) {
     return 0;
 }
 
-int main(int argc, char** argv) {
-    int opt, err;
-    sllq_t q = SLLQ_T_INIT;
-    sllq_mode_t mode = SLLQ_MUTEX;
-    struct context a, b;
-    size_t num = 100;
+int main(int argc, char** argv)
+{
+    int             opt, err;
+    sllq_t          q    = SLLQ_T_INIT;
+    sllq_mode_t     mode = SLLQ_MUTEX;
+    struct context  a, b;
+    size_t          num = 100;
     struct timespec start, end;
-    float fraction;
+    float           fraction;
 
     while ((opt = getopt(argc, argv, "m:n:hV")) != -1) {
         switch (opt) {
         case 'm':
             if (!strcmp(optarg, "mutex")) {
                 mode = SLLQ_MUTEX;
-            }
-            else if (!strcmp(optarg, "pipe")) {
+            } else if (!strcmp(optarg, "pipe")) {
                 mode = SLLQ_PIPE;
-            }
-            else {
+            } else {
                 usage();
                 return 1;
             }
@@ -144,9 +145,9 @@ int main(int argc, char** argv) {
         fprintf(stderr, "sllq_set_size(): %s\n", sllq_strerror(err));
         return 2;
     }
-    a.q = &q;
+    a.q   = &q;
     a.num = num;
-    b.q = &q;
+    b.q   = &q;
     b.num = num;
 
     if (clock_gettime(CLOCK_MONOTONIC, &start)) {
@@ -177,8 +178,7 @@ int main(int argc, char** argv) {
             perror("pthread_join()");
             return 2;
         }
-    }
-    else {
+    } else {
         if ((err = pthread_cancel(b.thr))) {
             errno = err;
             perror("pthread_cancel()");
@@ -196,15 +196,13 @@ int main(int argc, char** argv) {
 
     if (end.tv_sec == start.tv_sec && end.tv_nsec >= start.tv_nsec) {
         fraction = 1. / (((float)end.tv_nsec - (float)start.tv_nsec) / (float)1000000000);
-    }
-    else if (end.tv_sec > start.tv_sec) {
-        fraction = 1. / (((float)end.tv_sec - (float)start.tv_sec - 1) + ((float)(1000000000 - start.tv_nsec + end.tv_nsec)/(float)1000000000));
-    }
-    else {
+    } else if (end.tv_sec > start.tv_sec) {
+        fraction = 1. / (((float)end.tv_sec - (float)start.tv_sec - 1) + ((float)(1000000000 - start.tv_nsec + end.tv_nsec) / (float)1000000000));
+    } else {
         fraction = 0.;
     }
     if (!b.num && fraction) {
-        printf("%.0f/sec\n", num*fraction);
+        printf("%.0f/sec\n", num * fraction);
     }
 
     return 0;

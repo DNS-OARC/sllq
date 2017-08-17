@@ -31,6 +31,8 @@
 #define sllq_assert(x)
 #endif
 
+/* clang-format off */
+
 #define SLLQ_VERSION_STR    "1.0.0"
 #define SLLQ_VERSION_MAJOR  1
 #define SLLQ_VERSION_MINOR  0
@@ -57,30 +59,34 @@
 #define SLLQ_EMPTY_STR      "queue is empty"
 #define SLLQ_FULL_STR       "queue is full"
 
+/* clang-format on */
+
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 const char* sllq_version_str(void);
-int sllq_version_major(void);
-int sllq_version_minor(void);
-int sllq_version_patch(void);
+int         sllq_version_major(void);
+int         sllq_version_minor(void);
+int         sllq_version_patch(void);
 
+/* clang-format off */
 #define SLLQ_ITEM_T_INIT { \
     0, 0, 0, \
     0, \
     PTHREAD_MUTEX_INITIALIZER, PTHREAD_COND_INITIALIZER \
 }
+/* clang-format on */
 typedef struct sllq_item sllq_item_t;
 struct sllq_item {
     unsigned short want_read : 1;
     unsigned short want_write : 1;
     unsigned short have_data : 1;
 
-    void*                   data;
+    void* data;
 
-    pthread_mutex_t         mutex;
-    pthread_cond_t          cond;
+    pthread_mutex_t mutex;
+    pthread_cond_t  cond;
 };
 
 typedef enum sllq_mode sllq_mode_t;
@@ -89,25 +95,27 @@ enum sllq_mode {
     SLLQ_PIPE
 };
 
+/* clang-format off */
 #define SLLQ_T_INIT { \
     SLLQ_MUTEX, \
     0, 0, 0, 0, 0 \
     -1, -1 \
 }
+/* clang-format on */
 typedef struct sllq sllq_t;
 struct sllq {
-    sllq_mode_t     mode;
+    sllq_mode_t mode;
 
     /* MUTEX mode */
-    sllq_item_t*    item;
-    size_t          size;
-    size_t          mask;
-    size_t          read;
-    size_t          write;
+    sllq_item_t* item;
+    size_t       size;
+    size_t       mask;
+    size_t       read;
+    size_t       write;
 
     /* PIPE mode */
-    int             read_pipe;
-    int             write_pipe;
+    int read_pipe;
+    int write_pipe;
 };
 
 typedef void (*sllq_item_callback_t)(void* data);
